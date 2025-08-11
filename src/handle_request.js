@@ -25,57 +25,78 @@ export async function handleRequest(request) {
 
   const targetUrl = `https://generativelanguage.googleapis.com${pathname}${search}`;
 
-  try {
-    const headers = new Headers();
-    for (const [key, value] of request.headers.entries()) {
-      if (key.trim().toLowerCase() === 'x-goog-api-key') {
-        const apiKeys = value.split(',').map(k => k.trim()).filter(k => k);
-        if (apiKeys.length > 0) {
-          const selectedKey = apiKeys[Math.floor(Math.random() * apiKeys.length)];
-          console.log(`Gemini Selected API Key: ${selectedKey}`);
-          headers.set('x-goog-api-key', selectedKey);
-        }
-      } else {
-        if (key.trim().toLowerCase()==='content-type')
-        {
-           headers.set(key, value);
-        }
+try {
+  const headers = new Headers();
+  for (const [key, value] of request.headers.entries()) {
+    if (key.trim().toLowerCase() === 'x-goog-api-key') {
+      const apiKeys = value.split(',').map(k => k.trim()).filter(k => k);
+      if (apiKeys.length > 0) {
+        const selectedKey = apiKeys[Math.floor(Math.random() * apiKeys.length)];
+        console.log(`Gemini Selected API Key: ${selectedKey}`);
+        headers.set('x-goog-api-key', selectedKey);
+      }
+    } else {
+      if (key.trim().toLowerCase() === 'content-type') {
+        headers.set(key, value);
       }
     }
+  }
 
-    console.log('Request Sending to Gemini')
-    console.log('targetUrl:'+targetUrl)
-    console.log(headers)
+  console.log('Request Sending to Gemini');
+  console.log('targetUrl:' + targetUrl);
+  console.log(headers);
 
-    const response = await fetch(targetUrl, {
-      method: request.method,
-      headers: headers,
-      body: request.body
-    });
+  // 如果是 generateContent 且是 JSON 请求，就自动加 google_search
+  let forwardBody = request.body;
+  const isJson = (headers.get('content-type') || '').includes('application/json');
+  const isGenerateContent = pathname.includes(':generateContent');
 
-    console.log("Call Gemini Success")
+  if (request.method !== 'GET' && isJson && isGenerateContent) {
+    const raw = await request.clone().text();
+    if (raw) {
+      try {
+        const obj = JSON.parse(raw);
+        if (!Array.isArray(obj.tools)) {
+          obj.tools = [{ google_search: {} }];
+        } else if (!obj.tools.some(t => t && t.google_search !== undefined)) {
+          obj.tools.push({ google_search: {} });
+        }
+        forwardBody = JSON.stringify(obj);
+        headers.delete('content-length'); // 避免长度不匹配
+      } catch {
+        forwardBody = raw;
+      }
+    }
+  }
 
-    const responseHeaders = new Headers(response.headers);
+  const response = await fetch(targetUrl, {
+    method: request.method,
+    headers: headers,
+    body: request.method === 'GET' ? undefined : forwardBody
+  });
 
-    console.log('Header from Gemini:')
-    console.log(responseHeaders)
+  console.log("Call Gemini Success");
 
-    responseHeaders.delete('transfer-encoding');
-    responseHeaders.delete('connection');
-    responseHeaders.delete('keep-alive');
-    responseHeaders.delete('content-encoding');
-    responseHeaders.set('Referrer-Policy', 'no-referrer');
+  const responseHeaders = new Headers(response.headers);
 
-    return new Response(response.body, {
-      status: response.status,
-      headers: responseHeaders
-    });
+  console.log('Header from Gemini:');
+  console.log(responseHeaders);
 
-  } catch (error) {
-   console.error('Failed to fetch:', error);
-   return new Response('Internal Server Error\n' + error?.stack, {
+  responseHeaders.delete('transfer-encoding');
+  responseHeaders.delete('connection');
+  responseHeaders.delete('keep-alive');
+  responseHeaders.delete('content-encoding');
+  responseHeaders.set('Referrer-Policy', 'no-referrer');
+
+  return new Response(response.body, {
+    status: response.status,
+    headers: responseHeaders
+  });
+
+} catch (error) {
+  console.error('Failed to fetch:', error);
+  return new Response('Internal Server Error\n' + error?.stack, {
     status: 500,
     headers: { 'Content-Type': 'text/plain' }
-   });
+  });
 }
-};
