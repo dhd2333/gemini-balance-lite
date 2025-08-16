@@ -50,35 +50,51 @@ export async function handleRequest(request) {
     console.log('targetUrl:' + targetUrl);
     console.log(headers);
 
-    // —— 自动为 generateContent 注入联网工具 —— //
+    // —— generateContent 请求体处理：图片模型净化，其他模型可选注入 search —— //
     let forwardBody = request.body; // 默认透传
     const isJson = (headers.get('content-type') || '').includes('application/json');
     const isGenerateContent = pathname.includes(':generateContent');
 
     if (request.method !== 'GET' && isJson) {
-      const raw = await request.clone().text(); // 读取一次
-      if (raw) {
-        if (isGenerateContent) {
-          try {
-            const obj = JSON.parse(raw);
-            if (!Array.isArray(obj.tools)) {
-              obj.tools = [{ google_search: {} }];
-            } else if (!obj.tools.some(t => t && t.google_search !== undefined)) {
-              obj.tools.push({ google_search: {} });
+      const raw = await request.clone().text();
+      if (raw && isGenerateContent) {
+        try {
+          const obj = JSON.parse(raw);
+          const modelName = decodeURIComponent((pathname.split('/models/')[1] || '').split(':')[0] || '');
+          const isImageModel = modelName.includes('image-generation');
+
+          if (isImageModel) {
+            // 图片模型：移除搜索、禁用函数调用、补 IMAGE 返回
+            if (Array.isArray(obj.tools)) {
+              obj.tools = obj.tools.filter(t => t && !t.googleSearch && !t.google_search);
+            } else {
+              obj.tools = [];
             }
-            forwardBody = JSON.stringify(obj);
-            // 防止 content-length 与新 body 不匹配
-            try { headers.delete('content-length'); } catch {}
-          } catch {
-            // 不是合法 JSON 就原样透传
-            forwardBody = raw;
+            obj.toolConfig = { functionCallingConfig: { mode: 'NONE' } };
+            obj.generationConfig = obj.generationConfig || {};
+            const rm = obj.generationConfig.responseModalities;
+            if (!Array.isArray(rm) || !rm.includes('IMAGE')) {
+              obj.generationConfig.responseModalities = ['TEXT', 'IMAGE'];
+            }
+          } else {
+            // 非图片：若需要可注入联网。这里保持默认关闭，仅在缺失时可按需启用
+            // if (!Array.isArray(obj.tools)) obj.tools = [];
+            // if (!obj.tools.some(t => t && (t.googleSearch || t.google_search))) {
+            //   obj.tools.push({ googleSearch: {} });
+            // }
           }
-        } else {
+
+          forwardBody = JSON.stringify(obj);
+          headers.set('Content-Type', 'application/json');
+          try { headers.delete('content-length'); } catch {}
+        } catch {
           forwardBody = raw;
         }
+      } else if (raw) {
+        forwardBody = raw;
       }
     }
-    // —— 注入结束 —— //
+    // —— 处理结束 —— //
 
     const response = await fetch(targetUrl, {
       method: request.method,
