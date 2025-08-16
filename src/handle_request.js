@@ -74,7 +74,7 @@ export async function handleRequest(request) {
             obj.generationConfig = obj.generationConfig || {};
             const rm = obj.generationConfig.responseModalities;
             if (!Array.isArray(rm) || !rm.includes('IMAGE')) {
-              obj.generationConfig.responseModalities = ['TEXT', 'IMAGE'];
+              obj.generationConfig.responseModalities = ['IMAGE'];
             }
           } else {
             // 非图片：若需要可注入联网。这里保持默认关闭，仅在缺失时可按需启用
